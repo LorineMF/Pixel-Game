@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pixel Game</title>
+  <link rel="stylesheet" href="./style.css">
+  <style>
+    /* ── Mini-jeu runner ── */
+    #runner-zone {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      opacity: 0;
+      animation: fadeRule 0.6s ease 1.3s forwards;
+      user-select: none;
+    }
+
+    #runner-hint {
+      font-family: monospace;
+      font-size: 9px;
+      letter-spacing: 4px;
+      color: #7a6aaa;
+      text-transform: uppercase;
+    }
+
+    #runner-canvas {
+      display: block;
+      image-rendering: pixelated;
+      cursor: pointer;
+    }
+
+    #runner-score-line {
+      font-family: monospace;
+      font-size: 9px;
+      letter-spacing: 3px;
+      color: #7a6aaa;
+      min-height: 14px;
+      transition: color 0.3s;
+    }
+
+    #runner-score-line.active {
+      color: #c4b8e8;
+    }
+  </style>
+</head>
+<body>
+
+<div id="intro-screen">
+  <canvas id="menu-bg"></canvas>
+  <div id="intro-content">
+
+    <div id="intro-title">PIXEL<span>GAME</span></div>
+    <div id="intro-sub">Lorine Magnin-Feysot</div>
+
+    <div id="menu-choose">Choisir un mode</div>
+    <div id="menu-buttons">
+      <a class="menu-btn" href="pixel-creature.html">
+        <span class="menu-btn-icon">✦</span>
+        <span class="menu-btn-title">PIXEL CRÉATURE</span>
+        <span class="menu-btn-desc">Élève et fais évoluer ta créature</span>
+      </a>
+      <a class="menu-btn" href="labyrinthe.html">
+        <span class="menu-btn-icon">◈</span>
+        <span class="menu-btn-title">LABYRINTHE</span>
+        <span class="menu-btn-desc">Trouve la sortie du labyrinthe</span>
+      </a>
+    </div>
+
+    <!-- Mini-jeu runner discret -->
+    <div id="runner-zone">
+      <div id="runner-hint">— espace pour jouer —</div>
+      <canvas id="runner-canvas" width="460" height="70"></canvas>
+      <div id="runner-score-line">appuie sur espace ou clique pour sauter</div>
+    </div>
+
+    <div id="intro-sub2">Lorine Magnin-Feysot</div>
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════
+   FOND ANIMÉ (particules)
+═══════════════════════════════════════════ */
+(function(){
+  var canvas = document.getElementById('menu-bg');
+  if(!canvas) return;
+  var ctx = canvas.getContext('2d');
+  var W, H, particles = [];
+  var cols = ['#a78bfa','#7c6bbf','#4a3f7a','#c4b8e8','#6d5f90'];
+
+  function resize(){
+    W = canvas.width = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  for(var i=0;i<38;i++){
+    particles.push({
+      x:   Math.random()*window.innerWidth,
+      y:   Math.random()*window.innerHeight,
+      s:   Math.random()*8+4,
+      vx:  (Math.random()-0.5)*0.3,
+      vy:  (Math.random()-0.5)*0.3,
+      col: cols[Math.floor(Math.random()*cols.length)],
+      a:   1
+    });
+  }
+
+  function loop(){
+    if(!document.getElementById('intro-screen') ||
+       document.getElementById('intro-screen').style.display==='none'){ return; }
+    ctx.clearRect(0,0,W,H);
+    for(var i=0;i<particles.length;i++){
+      var p=particles[i];
+      p.x+=p.vx; p.y+=p.vy;
+      if(p.x<0)p.x=W; if(p.x>W)p.x=0;
+      if(p.y<0)p.y=H; if(p.y>H)p.y=0;
+      ctx.globalAlpha=p.a;
+      ctx.fillStyle=p.col;
+      ctx.fillRect(Math.floor(p.x),Math.floor(p.y),Math.floor(p.s),Math.floor(p.s));
+    }
+    ctx.globalAlpha=1;
+    requestAnimationFrame(loop);
+  }
+  loop();
+  window._restartMenuBg = loop;
+})();
+
+
+/* ═══════════════════════════════════════════
+   MINI-JEU RUNNER PIXEL
+═══════════════════════════════════════════ */
+(function(){
+  var C   = document.getElementById('runner-canvas');
+  var ctx = C.getContext('2d');
+  var W   = C.width;   // 460
+  var H   = C.height;  // 70
+
+  // ── Palette esthétique du projet ──
+  var COL_BG       = 'transparent';
+  var COL_GROUND   = '#7a6aaa';
+  var COL_PLAYER   = '#c4b8e8';
+  var COL_OBSTACLE = '#a78bfa';
+  var COL_STAR     = '#6d5f90';
+  var COL_DEAD     = '#9880c8';
+  var COL_TRAIL    = 'rgba(196,184,232,0.3)';
+
+  // ── Sol ──
+  var GY = H - 12; // y du sol (ligne)
+
+  // ── Étoiles de fond (décor) ──
+  var stars = [];
+  for(var i=0;i<18;i++){
+    stars.push({
+      x: Math.random()*W,
+      y: Math.random()*(GY-10)+4,
+      s: Math.random()<0.5 ? 1 : 2
+    });
+  }
+
+  // ── Joueur ──
+  var PW = 10, PH = 10; // taille du carré joueur
+  var player = {
+    x: 32,
+    y: GY - PH,
+    vy: 0,
+    jumping: false,
+    dead: false,
+    trail: [],
+    squash: 1,   // facteur vertical squash & stretch
+    squashX: 1,  // facteur horizontal inverse
+    rotation: 0  // rotation pendant le saut
+  };
+
+  // ── Obstacles ──
+  var obstacles = [];
+  var OBS_INTERVAL_MIN = 35;  // frames min entre obstacles
+  var OBS_INTERVAL_MAX = 80;
+  var nextObs = 40;
+  var obsTimer = 0;
+
+  // ── Particules de saut ──
+  var jumpParticles = [];
+
+  // ── État du jeu ──
+  var STATE = 'idle'; // idle | running | dead
+  var score  = 0;
+  var hiScore = 0;
+  var speed  = 2.2;
+  var frame  = 0;
+
+  var scoreLine = document.getElementById('runner-score-line');
+
+  // ── Contrôles ──
+  function jump(){
+    if(STATE === 'dead'){
+      restart();
+      return;
+    }
+    if(STATE === 'idle'){
+      STATE = 'running';
+      scoreLine.classList.add('active');
+    }
+    if(!player.jumping && !player.dead){
+      player.vy = -5.2;
+      player.jumping = true;
+      // squash au décollage
+      player.squash  = 1.5;
+      player.squashX = 0.7;
+      // particules de saut — plus nombreuses et dispersées
+      for(var i=0;i<12;i++){
+        jumpParticles.push({
+          x: player.x + PW/2 + (Math.random()-0.5)*4,
+          y: player.y + PH,
+          vx: (Math.random()-0.5)*3.5,
+          vy: Math.random()*2.2+0.5,
+          life: 1,
+          s: Math.random()<0.4 ? 2 : 1
+        });
+      }
+    }
+  }
+
+  document.addEventListener('keydown', function(e){
+    if(e.code === 'Space' || e.code === 'ArrowUp'){
+      // évite le scroll de page avec espace
+      if(document.activeElement === document.body) e.preventDefault();
+      jump();
+    }
+  });
+  C.addEventListener('click', jump);
+  C.addEventListener('touchstart', function(e){ e.preventDefault(); jump(); }, {passive:false});
+
+  function restart(){
+    player.y       = GY - PH;
+    player.vy      = 0;
+    player.jumping = false;
+    player.dead    = false;
+    player.trail   = [];
+    player.squash  = 1;
+    player.squashX = 1;
+    player.rotation = 0;
+    obstacles      = [];
+    jumpParticles  = [];
+    score          = 0;
+    speed          = 2.2;
+    obsTimer       = 0;
+    nextObs        = 80;
+    STATE          = 'running';
+    frame          = 0;
+    scoreLine.classList.add('active');
+  }
+
+  // ── Génération obstacles ──
+  function spawnObstacle(){
+    // hauteur variable : 6, 8 ou 12px — carré(s) empilés
+    var heights = [6, 8, 12];
+    var oh = heights[Math.floor(Math.random()*heights.length)];
+    var ow = Math.random()<0.4 ? 5 : 4; // largeur
+    obstacles.push({
+      x: W + 4,
+      y: GY - oh,
+      w: ow,
+      h: oh
+    });
+  }
+
+  // ── Détection collision (AABB) ──
+  function collides(o){
+    var margin = 2; // petit forgiveness pixel
+    return (
+      player.x + margin       < o.x + o.w &&
+      player.x + PW - margin  > o.x &&
+      player.y + margin       < o.y + o.h &&
+      player.y + PH - margin  > o.y
+    );
+  }
+
+  // ── Boucle principale ──
+  function tick(){
+    requestAnimationFrame(tick);
+    frame++;
+
+    // Fond transparent (laisse le fond sombre du site)
+    ctx.clearRect(0,0,W,H);
+
+    // ── Sol en pointillés pixel ──
+    ctx.fillStyle = COL_GROUND;
+    for(var sx=0; sx<W; sx+=4){
+      ctx.fillRect(sx, GY+1, 2, 1);
+    }
+
+    // ── Étoiles décoratives ──
+    ctx.fillStyle = COL_STAR;
+    for(var i=0;i<stars.length;i++){
+      var st = stars[i];
+      ctx.fillRect(Math.floor(st.x), Math.floor(st.y), st.s, st.s);
+      if(STATE==='running'){
+        st.x -= speed * 0.18; // parallaxe lente
+        if(st.x < -2) st.x = W + 2;
+      }
+    }
+
+    if(STATE==='running'){
+      score++;
+      // accélération progressive (plafonnée)
+      if(frame % 300 === 0 && speed < 5.5) speed += 0.18;
+
+      // ── Physique joueur ──
+      player.vy += 0.38; // gravité
+      player.y  += player.vy;
+      if(player.y >= GY - PH){
+        player.y       = GY - PH;
+        player.vy      = 0;
+        player.jumping = false;
+      }
+
+      // traînée
+      player.trail.push({ x: player.x, y: player.y, squash: player.squash, squashX: player.squashX });
+      if(player.trail.length > 8) player.trail.shift();
+
+      // squash & stretch : retour progressif à 1
+      player.squash  += (1 - player.squash)  * 0.18;
+      player.squashX += (1 - player.squashX) * 0.18;
+
+      // rotation pendant le saut, retour à 0 au sol
+      if(player.jumping){
+        player.rotation += 0.13; // tourne dans les airs
+      } else {
+        player.rotation *= 0.6;  // snap retour rapide au sol
+        if(Math.abs(player.rotation) < 0.01) player.rotation = 0;
+        // écrasement à l'atterrissage
+      if(player.squash < 1.05){
+         player.squash  = 1;
+         player.squashX = 1;
+}
+      }
+
+      // ── Obstacles ──
+      obsTimer++;
+      if(obsTimer >= nextObs){
+        spawnObstacle();
+        obsTimer = 0;
+        nextObs  = OBS_INTERVAL_MIN + Math.random()*(OBS_INTERVAL_MAX-OBS_INTERVAL_MIN);
+        // intervalles qui se resserrent légèrement avec la vitesse
+        nextObs  = Math.max(45, nextObs - (speed-2.2)*8);
+      }
+      for(var i=obstacles.length-1;i>=0;i--){
+        obstacles[i].x -= speed;
+        if(obstacles[i].x + obstacles[i].w < -4) obstacles.splice(i,1);
+      }
+
+      // ── Collisions ──
+      for(var i=0;i<obstacles.length;i++){
+        if(collides(obstacles[i])){
+          STATE        = 'dead';
+          player.dead  = true;
+          if(score > hiScore) hiScore = score;
+          scoreLine.textContent = 'game over · espace pour recommencer · record ' + hiScore;
+          scoreLine.classList.add('active');
+          break;
+        }
+      }
+
+      // ── Particules de saut ──
+      for(var i=jumpParticles.length-1;i>=0;i--){
+        var p = jumpParticles[i];
+        p.x   += p.vx;
+        p.y   += p.vy;
+        p.life -= 0.07;
+        if(p.life <= 0) jumpParticles.splice(i,1);
+      }
+
+      // Score affiché
+      var s = Math.floor(score/4);
+if(s > hiScore) hiScore = s;
+    scoreLine.textContent = 'SCORE ' + String(s).padStart(4,'0') + ' · RECORD ' + hiScore;
+    }
+
+    if(STATE==='idle'){
+      // clignotement du curseur joueur
+      if(Math.floor(frame/18)%2===0){
+        ctx.fillStyle = COL_PLAYER;
+        ctx.fillRect(player.x, player.y, PW, PH);
+      }
+    }
+
+    // ── Rendu traînée ──
+    if(STATE==='running' || STATE==='dead'){
+      for(var i=0;i<player.trail.length;i++){
+        var t = player.trail[i];
+        var alpha = (i/player.trail.length)*0.2;
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle   = COL_PLAYER;
+        var tw = PW * (t.squashX||1);
+        var th = PH * (t.squash||1);
+        ctx.fillRect(t.x + (PW-tw)/2, t.y + (PH-th), tw, th);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // ── Rendu joueur ──
+    if(!player.dead){
+      var cx = player.x + PW/2;
+      var cy = player.y + PH/2;
+      var sw = PW  * player.squashX;
+      var sh = PH  * player.squash;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(player.rotation);
+      ctx.fillStyle = COL_PLAYER;
+      ctx.fillRect(-sw/2, -sh/2, sw, sh);
+      // petit œil pixel (suit la rotation)
+      ctx.fillStyle = '#0e0c16';
+      ctx.fillRect(sw/2-3, -sh/2+2, 1, 1);
+      ctx.restore();
+    } else {
+      // mort : croix pixel
+      ctx.fillStyle = COL_DEAD;
+      ctx.fillRect(player.x,   player.y,   PW, PH);
+      ctx.fillStyle = '#0e0c16';
+      ctx.fillRect(player.x+2, player.y+2, 2, 2);
+      ctx.fillRect(player.x+4, player.y+4, 2, 2);
+      ctx.fillRect(player.x+4, player.y+2, 2, 2);
+      ctx.fillRect(player.x+2, player.y+4, 2, 2);
+    }
+
+    // ── Particules de saut ──
+    for(var i=0;i<jumpParticles.length;i++){
+      var p = jumpParticles[i];
+      ctx.globalAlpha = p.life * 0.7;
+      ctx.fillStyle   = COL_PLAYER;
+      ctx.fillRect(Math.floor(p.x), Math.floor(p.y), p.s, p.s);
+    }
+    ctx.globalAlpha = 1;
+
+    // ── Obstacles ──
+    ctx.fillStyle = COL_OBSTACLE;
+    for(var i=0;i<obstacles.length;i++){
+      var o = obstacles[i];
+      ctx.fillRect(o.x, o.y, o.w, o.h);
+      // détail : ligne de reflet pixel en haut
+      ctx.fillStyle = COL_PLAYER;
+      ctx.fillRect(o.x, o.y, o.w, 1);
+      ctx.fillStyle = COL_OBSTACLE;
+    }
+
+  }
+
+  tick();
+
+})();
+</script>
+</body>
+</html>
